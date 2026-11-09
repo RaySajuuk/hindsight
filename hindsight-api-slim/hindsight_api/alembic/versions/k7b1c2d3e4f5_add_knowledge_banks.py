@@ -38,11 +38,11 @@ def _pg_schema_prefix() -> str:
 
 
 def _pg_upgrade() -> None:
-    s = _pg_schema_prefix()
-    op.execute(f"ALTER TABLE {s}banks ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'memory'")
+    schema = _pg_schema_prefix()
+    op.execute(f"ALTER TABLE {schema}banks ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'memory'")
     op.execute(f"""
-        CREATE TABLE IF NOT EXISTS {s}kb_documents (
-            bank_id TEXT NOT NULL REFERENCES {s}banks(bank_id) ON DELETE CASCADE,
+        CREATE TABLE IF NOT EXISTS {schema}kb_documents (
+            bank_id TEXT NOT NULL REFERENCES {schema}banks(bank_id) ON DELETE CASCADE,
             document_id TEXT NOT NULL,
             filename TEXT,
             content_type TEXT NOT NULL,
@@ -60,10 +60,12 @@ def _pg_upgrade() -> None:
             PRIMARY KEY (bank_id, document_id)
         )
     """)
-    op.execute(f"CREATE INDEX IF NOT EXISTS idx_kb_documents_tags ON {s}kb_documents USING GIN (tags)")
-    op.execute(f"CREATE INDEX IF NOT EXISTS idx_kb_documents_updated ON {s}kb_documents (bank_id, updated_at DESC)")
+    op.execute(f"CREATE INDEX IF NOT EXISTS idx_kb_documents_tags ON {schema}kb_documents USING GIN (tags)")
+    op.execute(
+        f"CREATE INDEX IF NOT EXISTS idx_kb_documents_updated ON {schema}kb_documents (bank_id, updated_at DESC)"
+    )
     op.execute(f"""
-        CREATE TABLE IF NOT EXISTS {s}kb_passages (
+        CREATE TABLE IF NOT EXISTS {schema}kb_passages (
             bank_id TEXT NOT NULL,
             document_id TEXT NOT NULL,
             idx INT NOT NULL,
@@ -77,15 +79,15 @@ def _pg_upgrade() -> None:
             -- Keyword arm: the passage text stemmed in its document's language (set on insert).
             search_vector tsvector,
             PRIMARY KEY (bank_id, document_id, idx),
-            FOREIGN KEY (bank_id, document_id) REFERENCES {s}kb_documents(bank_id, document_id) ON DELETE CASCADE
+            FOREIGN KEY (bank_id, document_id) REFERENCES {schema}kb_documents(bank_id, document_id) ON DELETE CASCADE
         )
     """)
-    op.execute(f"CREATE INDEX IF NOT EXISTS idx_kb_passages_bank ON {s}kb_passages (bank_id)")
-    op.execute(f"CREATE INDEX IF NOT EXISTS idx_kb_passages_search ON {s}kb_passages USING GIN (search_vector)")
+    op.execute(f"CREATE INDEX IF NOT EXISTS idx_kb_passages_bank ON {schema}kb_passages (bank_id)")
+    op.execute(f"CREATE INDEX IF NOT EXISTS idx_kb_passages_search ON {schema}kb_passages USING GIN (search_vector)")
     # Extra vectors of a passage, beside its primary one in kb_passages: a PDF page's band crops,
     # its whole text and its small text units. Search scores a page from all of them.
     op.execute(f"""
-        CREATE TABLE IF NOT EXISTS {s}kb_passage_vectors (
+        CREATE TABLE IF NOT EXISTS {schema}kb_passage_vectors (
             bank_id TEXT NOT NULL,
             document_id TEXT NOT NULL,
             idx INT NOT NULL,
@@ -94,17 +96,17 @@ def _pg_upgrade() -> None:
             embedding vector NOT NULL,
             PRIMARY KEY (bank_id, document_id, idx, role, n),
             FOREIGN KEY (bank_id, document_id, idx)
-                REFERENCES {s}kb_passages(bank_id, document_id, idx) ON DELETE CASCADE
+                REFERENCES {schema}kb_passages(bank_id, document_id, idx) ON DELETE CASCADE
         )
     """)
 
 
 def _pg_downgrade() -> None:
-    s = _pg_schema_prefix()
-    op.execute(f"DROP TABLE IF EXISTS {s}kb_passage_vectors")
-    op.execute(f"DROP TABLE IF EXISTS {s}kb_passages")
-    op.execute(f"DROP TABLE IF EXISTS {s}kb_documents")
-    op.execute(f"ALTER TABLE {s}banks DROP COLUMN IF EXISTS kind")
+    schema = _pg_schema_prefix()
+    op.execute(f"DROP TABLE IF EXISTS {schema}kb_passage_vectors")
+    op.execute(f"DROP TABLE IF EXISTS {schema}kb_passages")
+    op.execute(f"DROP TABLE IF EXISTS {schema}kb_documents")
+    op.execute(f"ALTER TABLE {schema}banks DROP COLUMN IF EXISTS kind")
 
 
 def _oracle_upgrade() -> None:

@@ -299,8 +299,11 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.uv.sources]
-# Route torch to the CPU-only PyTorch index; everything else uses PyPI
+# Route torch to the CPU-only PyTorch index; everything else uses PyPI. torchvision goes
+# with it: its compiled ops are built against one torch, and PyPI's build against the CUDA
+# torch fails on the CPU one at import ("operator torchvision::nms does not exist").
 torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
 
 [tool.ty]
 # Type checking configuration
