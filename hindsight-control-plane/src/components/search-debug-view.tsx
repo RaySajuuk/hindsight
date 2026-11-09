@@ -33,6 +33,8 @@ import { Spinner } from "@/components/ui/spinner";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import { MemoryDetailModal } from "./memory-detail-modal";
+import { RecallDocumentsSection } from "@/components/knowledge-passage";
+import { fromRecallDocument, type KnowledgeSearchResult } from "@/lib/knowledge-banks";
 import { AttachmentStrip, RetainedAttachment } from "@/components/ui/inline-attachment-text";
 import { EntityChip, TagChip } from "@/components/ui/facet-chip";
 
@@ -143,6 +145,8 @@ export function SearchDebugView() {
   // JSON view reads it: results take their attachments from the fact's own edge,
   // never from the chunk (see attachmentsForResult).
   const [chunks, setChunks] = useState<Record<string, any> | null>(null);
+  // Passages from the knowledge banks this bank links; only present when it links any.
+  const [documents, setDocuments] = useState<KnowledgeSearchResult[] | null>(null);
   const [observations, setObservations] = useState<any[] | null>(null);
   const [trace, setTrace] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
@@ -277,6 +281,7 @@ export function SearchDebugView() {
       setEntities(data.entities || null);
       setChunks(data.chunks || null);
       setObservations(data.observations || null);
+      setDocuments(data.documents ? data.documents.map(fromRecallDocument) : null);
       setTrace(data.trace || null);
       setViewMode("results");
     } catch (error) {
@@ -552,6 +557,9 @@ export function SearchDebugView() {
           {/* Results View */}
           {viewMode === "results" && (
             <div className="space-y-4">
+              {documents && documents.length > 0 && (
+                <RecallDocumentsSection documents={documents} />
+              )}
               {/* Observations Section */}
               {observations && observations.length > 0 && (
                 <Card className="border-orange-500/30 bg-orange-500/5">
@@ -584,7 +592,9 @@ export function SearchDebugView() {
 
               {/* Memories Section */}
               <div className="space-y-3">
-                {results.length === 0 && (!observations || observations.length === 0) ? (
+                {results.length === 0 &&
+                (!observations || observations.length === 0) &&
+                (!documents || documents.length === 0) ? (
                   <Card>
                     <CardContent className="flex flex-col items-center justify-center py-12">
                       <Search className="h-12 w-12 text-muted-foreground mb-4" />
@@ -1295,6 +1305,7 @@ export function SearchDebugView() {
                       ...(entities && { entities }),
                       ...(chunks && { chunks }),
                       ...(observations && { observations }),
+                      ...(documents && { documents }),
                       trace,
                     }}
                     collapsed={2}

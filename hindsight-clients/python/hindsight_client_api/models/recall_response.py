@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, StrictBool
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.chunk_data import ChunkData
 from hindsight_client_api.models.entity_state_response import EntityStateResponse
+from hindsight_client_api.models.knowledge_document_hit import KnowledgeDocumentHit
 from hindsight_client_api.models.recall_result import RecallResult
 from typing import Optional, Set
 from typing_extensions import Self
@@ -35,7 +36,8 @@ class RecallResponse(BaseModel):
     chunks: Optional[Dict[str, ChunkData]] = None
     source_facts: Optional[Dict[str, RecallResult]] = None
     source_facts_truncated: Optional[StrictBool] = None
-    __properties: ClassVar[List[str]] = ["results", "trace", "entities", "chunks", "source_facts", "source_facts_truncated"]
+    documents: Optional[List[KnowledgeDocumentHit]] = None
+    __properties: ClassVar[List[str]] = ["results", "trace", "entities", "chunks", "source_facts", "source_facts_truncated", "documents"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -104,6 +106,13 @@ class RecallResponse(BaseModel):
                 if self.source_facts[_key_source_facts]:
                     _field_dict[_key_source_facts] = self.source_facts[_key_source_facts].to_dict()
             _dict['source_facts'] = _field_dict
+        # override the default output from pydantic by calling `to_dict()` of each item in documents (list)
+        _items = []
+        if self.documents:
+            for _item_documents in self.documents:
+                if _item_documents:
+                    _items.append(_item_documents.to_dict())
+            _dict['documents'] = _items
         # set to None if trace (nullable) is None
         # and model_fields_set contains the field
         if self.trace is None and "trace" in self.model_fields_set:
@@ -128,6 +137,11 @@ class RecallResponse(BaseModel):
         # and model_fields_set contains the field
         if self.source_facts_truncated is None and "source_facts_truncated" in self.model_fields_set:
             _dict['source_facts_truncated'] = None
+
+        # set to None if documents (nullable) is None
+        # and model_fields_set contains the field
+        if self.documents is None and "documents" in self.model_fields_set:
+            _dict['documents'] = None
 
         return _dict
 
@@ -161,7 +175,8 @@ class RecallResponse(BaseModel):
             )
             if obj.get("source_facts") is not None
             else None,
-            "source_facts_truncated": obj.get("source_facts_truncated")
+            "source_facts_truncated": obj.get("source_facts_truncated"),
+            "documents": [KnowledgeDocumentHit.from_dict(_item) for _item in obj["documents"]] if obj.get("documents") is not None else None
         })
         return _obj
 

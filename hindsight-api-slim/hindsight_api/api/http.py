@@ -218,6 +218,7 @@ from hindsight_api.engine.response_models import (
     ConsolidationStrategySpec,
     DryRunExtractionResult,
     FieldWithDefault,
+    KnowledgeDocumentHit,
     MemoryFact,
     MentalModelTrigger,
     MinScores,
@@ -1003,6 +1004,11 @@ class RecallResponse(BaseModel):
             "results[].source_fact_ids have no entry in source_facts — the budget ran out, the "
             "references are not dangling. Only set when source facts were requested."
         ),
+    )
+    documents: list[KnowledgeDocumentHit] | None = Field(
+        default=None,
+        description="Passages from the knowledge banks this bank links (bank config `knowledge_banks`). They "
+        "are authoritative product documentation: when a document and a memory disagree, the document wins.",
     )
 
 
@@ -4065,6 +4071,7 @@ class FeaturesInfo(BaseModel):
     file_upload_api: bool = Field(description="Whether file upload/conversion API is enabled")
     document_export_api: bool = Field(description="Whether the document export endpoint is enabled")
     document_import_api: bool = Field(description="Whether the document import endpoint is enabled")
+    knowledge_banks: bool = Field(default=False, description="Whether knowledge banks are enabled")
     audit_log: bool = Field(description="Whether audit logging is enabled by default (overridable per bank)")
     llm_trace: bool = Field(description="Whether per-bank LLM request tracing is enabled")
     store_document_text: bool = Field(
@@ -4088,6 +4095,7 @@ class VersionResponse(BaseModel):
                     "file_upload_api": True,
                     "document_export_api": True,
                     "document_import_api": True,
+                    "knowledge_banks": False,
                     "audit_log": False,
                     "llm_trace": False,
                     "store_document_text": True,
@@ -4780,6 +4788,10 @@ def _register_routes(app: FastAPI):
 
     app.state.resolve_bank_alias = _resolve_bank_alias
 
+    from hindsight_api.knowledge.routes import build_router as _build_knowledge_router
+
+    app.include_router(_build_knowledge_router(get_request_context))
+
     def admit_for(operation: PrecheckOperation):
         """Build a FastAPI dependency that holds an admission permit for the request.
 
@@ -5004,6 +5016,7 @@ def _register_routes(app: FastAPI):
                 file_upload_api=config.enable_file_upload_api,
                 document_export_api=config.enable_document_export_api,
                 document_import_api=config.enable_document_import_api,
+                knowledge_banks=config.enable_knowledge_banks,
                 audit_log=config.audit_log_enabled,
                 llm_trace=config.llm_trace_enabled,
                 store_document_text=config.store_document_text,
@@ -5561,6 +5574,7 @@ def _register_routes(app: FastAPI):
                         tag_groups=request.tag_groups,
                         min_scores=request.min_scores,
                         temporal_window=request.temporal_window,
+                        include_documents=True,
                     ),
                     operation="recall",
                     bank_id=bank_id,
@@ -5651,6 +5665,7 @@ def _register_routes(app: FastAPI):
                 chunks=chunks_response,
                 source_facts=source_facts_response,
                 source_facts_truncated=core_result.source_facts_truncated,
+                documents=core_result.documents,
             )
 
             handler_duration = time.perf_counter() - handler_start

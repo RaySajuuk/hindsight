@@ -380,7 +380,13 @@ def test_registered_tool_sets_match_the_allowlists(mock_memory):
 
     assert multi == set(_ALL_TOOLS)
     # Single-bank mode drops exactly the tools that operate across banks.
-    assert multi - single == {"list_banks", "create_bank", "get_bank_stats"}
+    assert multi - single == {
+        "list_banks",
+        "create_bank",
+        "get_bank_stats",
+        "list_knowledge_banks",
+        "search_knowledge_bank",
+    }
 
 
 def test_global_mcp_enabled_tools_filter_restricts_registered_tools(mock_memory):

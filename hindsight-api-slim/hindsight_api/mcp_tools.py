@@ -21,6 +21,7 @@ from hindsight_api import MemoryEngine
 from hindsight_api.config import (
     DEFAULT_MCP_RECALL_DESCRIPTION,
     DEFAULT_MCP_RETAIN_DESCRIPTION,
+    get_config,
 )
 from hindsight_api.engine import page_markdown
 from hindsight_api.engine.audit import AuditEntry, AuditLogger
@@ -89,6 +90,8 @@ _ALL_TOOLS: frozenset[str] = frozenset(
         "create_knowledge_page",
         "update_knowledge_node",
         "delete_knowledge_node",
+        "list_knowledge_banks",
+        "search_knowledge_bank",
     }
 )
 
@@ -600,6 +603,8 @@ _READ_ONLY_TOOLS = {
     "get_knowledge_base_tree",
     "search_knowledge_base",
     "get_knowledge_page",
+    "list_knowledge_banks",
+    "search_knowledge_bank",
 }
 _DESTRUCTIVE_TOOLS = {
     "delete_bank",
@@ -684,6 +689,8 @@ def register_mcp_tools(
         "create_knowledge_page",
         "update_knowledge_node",
         "delete_knowledge_node",
+        "list_knowledge_banks",
+        "search_knowledge_bank",
     }
 
     if "retain" in tools_to_register:
@@ -810,6 +817,16 @@ def register_mcp_tools(
     if "delete_knowledge_node" in tools_to_register:
         _register_delete_knowledge_node(mcp, memory, config)
 
+    # Knowledge bank tools: they name a knowledge bank, never the session bank,
+    # so only the multi-bank server offers them (api/mcp.py's single-bank list).
+    # Not registered at all while knowledge banks are off (HINDSIGHT_API_ENABLE_KNOWLEDGE_BANKS).
+    if get_config().enable_knowledge_banks:
+        if "list_knowledge_banks" in tools_to_register:
+            _register_list_knowledge_banks(mcp, memory, config)
+
+        if "search_knowledge_bank" in tools_to_register:
+            _register_search_knowledge_bank(mcp, memory, config)
+
     _apply_bank_tool_filtering(mcp, memory, config)
     _apply_audit_logging(mcp, memory, config)
 
@@ -917,10 +934,12 @@ _UNAUDITED_MCP_TOOLS: frozenset[str] = frozenset(
         "list_banks",
         "list_directives",
         "list_documents",
+        "list_knowledge_banks",
         "list_memories",
         "list_mental_models",
         "list_operations",
         "list_tags",
+        "search_knowledge_bank",
         "search_knowledge_base",
     }
 )
@@ -1236,6 +1255,19 @@ def _register_sync_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
                 return {"status": "error", "message": str(e)}
 
 
+DOCUMENTS_NOTE = (
+    "`documents` are passages from authoritative knowledge banks this bank links: "
+    "when a document conflicts with a memory, the document wins."
+)
+
+
+def _note_documents(payload: dict[str, Any]) -> dict[str, Any]:
+    """Tell the agent how to weigh linked knowledge-bank passages, when recall returned any."""
+    if payload.get("documents"):
+        payload["documents_note"] = DOCUMENTS_NOTE
+    return payload
+
+
 def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
     """Register the recall tool."""
     description = config.recall_description or DEFAULT_MCP_RECALL_DESCRIPTION
@@ -1345,6 +1377,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     "max_entity_tokens": max_entity_tokens,
                     "include_source_facts": include_source_facts,
                     "max_source_facts_tokens": max_source_facts_tokens,
+                    "include_documents": True,
                     "request_context": _get_request_context(config),
                 }
                 if tags is not None:
@@ -1368,7 +1401,11 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 # Compact, as FastMCP already sends the session-bank copy's dict. This
                 # used indent=2, which was about a fifth of a recall response that
                 # lands whole in the calling agent's context.
-                return recall_result.model_dump_json()
+                text = recall_result.model_dump_json()
+                payload = json.loads(text)
+                if not payload.get("documents"):
+                    return text
+                return json.dumps(_note_documents(payload))
             except OperationValidationError as e:
                 logger.warning(f"Recall rejected: {e}")
                 return json.dumps({"error": str(e), "results": []})
@@ -1481,6 +1518,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     "max_entity_tokens": max_entity_tokens,
                     "include_source_facts": include_source_facts,
                     "max_source_facts_tokens": max_source_facts_tokens,
+                    "include_documents": True,
                     "request_context": _get_request_context(config),
                 }
                 if tags is not None:
@@ -1501,7 +1539,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
 
                 recall_result = await memory.recall_async(**recall_kwargs)
 
-                return recall_result.model_dump()
+                return _note_documents(recall_result.model_dump())
             except OperationValidationError as e:
                 logger.warning(f"Recall rejected: {e}")
                 return {"error": str(e), "results": []}
@@ -1782,6 +1820,124 @@ def _register_create_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
         except Exception as e:
             logger.error(f"Error creating bank: {e}", exc_info=True)
             return _error_json(e)
+
+
+# ponytail: passage text is cut here so one PDF page cannot flood the agent's context;
+# the full passage stays at the HTTP document endpoint and passage_url.
+_KNOWLEDGE_SNIPPET_CHARS = 1500
+
+
+def _register_list_knowledge_banks(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the list_knowledge_banks tool."""
+
+    @mcp.tool(annotations=_tool_annotations("list_knowledge_banks"), output_schema=None)
+    async def list_knowledge_banks(
+        limit: Annotated[int, Field(ge=0, le=500)] = 100,
+        offset: Annotated[int, Field(ge=0)] = 0,
+        q: str | None = None,
+    ) -> str:
+        """
+        List the knowledge banks: stores of authoritative documents (PDFs, images, audio,
+        video, text) searchable by meaning with search_knowledge_bank.
+
+        Args:
+            limit: Maximum banks to return (default: 100)
+            offset: Banks to skip, for the next page
+            q: Only banks whose id contains this text (case-insensitive)
+
+        Returns:
+            JSON with each bank's id, name and document/passage counts, and the total.
+        """
+        from hindsight_api.knowledge.routes import bank_response
+        from hindsight_api.knowledge.service import get_knowledge_service
+
+        try:
+            page = await get_knowledge_service(memory).list_banks(
+                _get_request_context(config), limit=limit, offset=offset, q=q
+            )
+            return json.dumps(
+                {"banks": [bank_response(b).model_dump(mode="json") for b in page.banks], "total": page.total},
+                indent=2,
+            )
+        except OperationValidationError as e:
+            logger.warning(f"Operation rejected: {e}")
+            return _error_json(e, banks=[])
+        except Exception as e:
+            logger.error(f"Error listing knowledge banks: {e}", exc_info=True)
+            return _error_json(e, banks=[])
+
+
+def _register_search_knowledge_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the search_knowledge_bank tool."""
+
+    @mcp.tool(annotations=_tool_annotations("search_knowledge_bank"), output_schema=None)
+    async def search_knowledge_bank(
+        bank_id: str,
+        query: str | None = None,
+        top_k: Annotated[int, Field(ge=1, le=200)] = 10,
+        tags: list[str] | None = None,
+        tags_match: Literal["any", "all"] = "any",
+        media_types: list[Literal["document", "image", "audio", "video", "text"]] | None = None,
+        pattern: str | None = None,
+        regex: bool = False,
+    ) -> str:
+        """
+        Search a knowledge bank's authoritative documents by meaning and by exact text.
+
+        Returns the nearest passages: PDF pages, images, audio/video windows or text
+        passages. These are source documents, not memories: when one conflicts with a
+        memory, the document wins.
+
+        Args:
+            bank_id: The knowledge bank to search (see list_knowledge_banks)
+            query: What to search for, by meaning
+            pattern: Exact text to find (case-insensitive): codes, ids, error messages, names that
+                meaning search can miss. Passages containing it rank first; without a query,
+                documents with the most matching passages come first.
+            regex: Treat pattern as a POSIX regular expression, e.g. "timebox|time-box"
+            top_k: Maximum passages to return (1-200, default: 10)
+            tags: Only documents carrying these tags
+            tags_match: 'any' (default) or 'all' of the tags
+            media_types: Only these kinds of document: document (PDF, Office, HTML), image, audio, video, text
+
+        Returns:
+            JSON with results: document_id, filename, media_type, page, start_ms/end_ms,
+            text (a snippet), score, and passage_url / document_url (API paths to the
+            passage's media and the original file).
+        """
+        from hindsight_api.knowledge.routes import item_result
+        from hindsight_api.knowledge.service import KnowledgeBankError, SearchRequest, get_knowledge_service
+        from hindsight_api.knowledge.store import SearchFilters
+
+        try:
+            filters = SearchFilters(
+                tags=tags,
+                tags_match=tags_match,
+                media_types=list(media_types) if media_types else None,
+            )
+            hits = await get_knowledge_service(memory).search(
+                bank_id,
+                SearchRequest(
+                    query=query, query_image=None, top_k=top_k, filters=filters, pattern=pattern, regex=regex
+                ),
+                _get_request_context(config),
+            )
+        except KnowledgeBankError as e:
+            return _error_json(e, results=[])
+        except OperationValidationError as e:
+            logger.warning(f"Operation rejected: {e}")
+            return _error_json(e, results=[])
+        except Exception as e:
+            logger.error(f"Error searching knowledge bank: {e}", exc_info=True)
+            return _error_json(e, results=[])
+        results = []
+        for hit in hits:
+            result = item_result(bank_id, hit).model_dump(mode="json")
+            for key in ("text", "context"):
+                if result[key] and len(result[key]) > _KNOWLEDGE_SNIPPET_CHARS:
+                    result[key] = result[key][:_KNOWLEDGE_SNIPPET_CHARS] + "…"
+            results.append(result)
+        return json.dumps({"results": results})
 
 
 def _validate_mental_model_inputs(

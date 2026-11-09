@@ -9732,6 +9732,21 @@
             "title": "Mcp Enabled Tools",
             "description": "MCP tool allowlist for this bank (None = all tools)"
           },
+          "knowledge_banks": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Banks",
+            "description": "Knowledge banks whose passages this bank's recall and reflect read"
+          },
           "consolidation_llm_batch_size": {
             "anyOf": [
               {
@@ -13180,6 +13195,12 @@
             "title": "Document Import Api",
             "description": "Whether the document import endpoint is enabled"
           },
+          "knowledge_banks": {
+            "type": "boolean",
+            "title": "Knowledge Banks",
+            "description": "Whether knowledge banks are enabled",
+            "default": false
+          },
           "audit_log": {
             "type": "boolean",
             "title": "Audit Log",
@@ -13426,6 +13447,124 @@
         "type": "object",
         "title": "IncludeOptions",
         "description": "Options for including additional data in recall results."
+      },
+      "KnowledgeDocumentHit": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id",
+            "description": "The knowledge bank the passage is from"
+          },
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "passage_index": {
+            "type": "integer",
+            "title": "Passage Index"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type",
+            "description": "document (PDF, Office), image, audio, video or text"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text",
+            "description": "Text of the passage (a PDF page's text layer, or a text passage)"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "start_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Ms"
+          },
+          "end_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Ms"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score",
+            "description": "Cosine similarity between the query and the passage"
+          },
+          "passage_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Url",
+            "description": "Streams this passage's page image or clip"
+          },
+          "document_url": {
+            "type": "string",
+            "title": "Document Url",
+            "description": "Streams the original file"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "document_id",
+          "passage_index",
+          "media_type",
+          "score",
+          "document_url"
+        ],
+        "title": "KnowledgeDocumentHit",
+        "description": "A passage from a knowledge bank the memory bank links: an authoritative document.\n\nWhen it conflicts with a memory, the document wins."
       },
       "KnowledgeNode": {
         "properties": {
@@ -17956,6 +18095,21 @@
             ],
             "title": "Source Facts Truncated",
             "description": "Whether the source_facts map was cut short by the token budget. When true, some IDs in results[].source_fact_ids have no entry in source_facts \u2014 the budget ran out, the references are not dangling. Only set when source facts were requested."
+          },
+          "documents": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/KnowledgeDocumentHit"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documents",
+            "description": "Passages from the knowledge banks this bank links (bank config `knowledge_banks`). They are authoritative product documentation: when a document and a memory disagree, the document wins."
           }
         },
         "type": "object",
@@ -20421,6 +20575,7 @@
             "document_export_api": true,
             "document_import_api": true,
             "file_upload_api": true,
+            "knowledge_banks": false,
             "llm_trace": false,
             "mcp": true,
             "observations": false,

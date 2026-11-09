@@ -466,7 +466,9 @@ class TestMentalModelToolRegistration:
         assert "get_knowledge_base_tree" in tools
         assert "create_knowledge_page" in tools
         assert "delete_knowledge_node" in tools
-        assert len(tools) == 39
+        assert "list_knowledge_banks" in tools
+        assert "search_knowledge_bank" in tools
+        assert len(tools) == 41
 
     def test_all_tools_have_nonempty_descriptions(self):
         """Every registered tool must expose a non-empty description.
@@ -2923,3 +2925,156 @@ class TestMcpCallLogging:
         mock_memory.audit_logger.log_fire_and_forget.assert_called_once()  # not once more for the inner call (#6071)
         entry = mock_memory.audit_logger.log_fire_and_forget.call_args.args[0]
         assert (entry.action, entry.transport, entry.bank_id) == ("sync_retain", "mcp", "test-bank")
+
+
+# =========================================================================
+# Knowledge Bank Tool Tests
+# =========================================================================
+
+
+def _kb_hit(text: str = "Rotate the keys every 90 days."):
+    from hindsight_api.knowledge.store import KnowledgeDocument, KnowledgePassage, SearchHit
+
+    document = KnowledgeDocument(
+        document_id="handbook",
+        filename="handbook.pdf",
+        content_type="application/pdf",
+        media_type="document",
+        size_bytes=1024,
+        storage_key="k",
+        content_hash="h",
+        status="ready",
+        error=None,
+        passage_count=3,
+        tags=["security"],
+    )
+    passage = KnowledgePassage(index=2, modality="image", text=text, page=3, media_key="m")
+    from hindsight_api.knowledge.service import SearchResultItem
+
+    return SearchResultItem(SearchHit(passage=passage, document=document, score=0.8123456789))
+
+
+@pytest.fixture
+def knowledge_service(monkeypatch):
+    from hindsight_api.knowledge import service as knowledge_service_module
+    from hindsight_api.knowledge.service import KnowledgeBankInfo, KnowledgeBankPage
+    from hindsight_api.knowledge.store import BankStats
+
+    service = MagicMock()
+    service.search = AsyncMock(return_value=[_kb_hit()])
+    service.list_banks = AsyncMock(
+        return_value=KnowledgeBankPage(
+            banks=[KnowledgeBankInfo("docs", None, BankStats(document_count=1, passage_count=3))], total=7
+        )
+    )
+    monkeypatch.setattr(knowledge_service_module, "get_knowledge_service", lambda _engine: service)
+    return service
+
+
+@pytest.mark.asyncio
+class TestKnowledgeBankTools:
+    async def test_knowledge_bank_tools_are_not_registered_when_the_flag_is_off(self, mock_memory, monkeypatch):
+        from hindsight_api.config import clear_config_cache
+
+        monkeypatch.setenv("HINDSIGHT_API_ENABLE_KNOWLEDGE_BANKS", "false")
+        clear_config_cache()
+        mcp = _make_mcp_server(mock_memory, {"list_knowledge_banks", "search_knowledge_bank"})
+        assert not set(_tools(mcp)) & {"list_knowledge_banks", "search_knowledge_bank"}
+
+    async def test_list_knowledge_banks(self, mock_memory, knowledge_service):
+        mcp = _make_mcp_server(mock_memory, {"list_knowledge_banks"})
+        result = json.loads(await _tools(mcp)["list_knowledge_banks"].fn(limit=1, offset=2, q="do"))
+        assert result["banks"][0]["bank_id"] == "docs"
+        assert result["banks"][0]["passage_count"] == 3
+        assert result["total"] == 7
+        assert knowledge_service.list_banks.call_args.kwargs == {"limit": 1, "offset": 2, "q": "do"}
+
+    async def test_search_passes_filters_and_returns_urls(self, mock_memory, knowledge_service):
+        mcp = _make_mcp_server(mock_memory, {"search_knowledge_bank"})
+        result = json.loads(
+            await _tools(mcp)["search_knowledge_bank"].fn(
+                bank_id="docs",
+                query="key rotation",
+                top_k=5,
+                tags=["security"],
+                media_types=["document"],
+            )
+        )
+        bank_id, request, _rc = knowledge_service.search.call_args.args
+        assert bank_id == "docs"
+        assert (request.query, request.top_k, request.query_image) == ("key rotation", 5, None)
+        assert request.filters.tags == ["security"]
+        assert request.filters.media_types == ["document"]
+        hit = result["results"][0]
+        assert (hit["document_id"], hit["filename"], hit["media_type"], hit["page"]) == (
+            "handbook",
+            "handbook.pdf",
+            "document",
+            3,
+        )
+        assert hit["passage_url"] == "/v1/default/knowledge-banks/docs/documents/handbook/passages/2/media"
+        assert hit["document_url"] == "/v1/default/knowledge-banks/docs/documents/handbook/file"
+        assert hit["score"] == pytest.approx(0.812346)
+
+    async def test_search_cuts_long_text(self, mock_memory, knowledge_service):
+        knowledge_service.search.return_value = [_kb_hit("x" * 5000)]
+        mcp = _make_mcp_server(mock_memory, {"search_knowledge_bank"})
+        result = json.loads(await _tools(mcp)["search_knowledge_bank"].fn(bank_id="docs", query="q"))
+        assert len(result["results"][0]["text"]) < 2000
+
+    async def test_search_unknown_bank_is_an_error_payload(self, mock_memory, knowledge_service):
+        from hindsight_api.knowledge.service import KnowledgeBankError
+
+        knowledge_service.search.side_effect = KnowledgeBankError("knowledge bank 'nope' not found", 404)
+        mcp = _make_mcp_server(mock_memory, {"search_knowledge_bank"})
+        result = json.loads(await _tools(mcp)["search_knowledge_bank"].fn(bank_id="nope", query="q"))
+        assert result == {"error": "knowledge bank 'nope' not found", "results": []}
+
+    async def test_search_top_k_is_bounded(self, mock_memory, knowledge_service):
+        mcp = _make_mcp_server(mock_memory, {"search_knowledge_bank"})
+        mock_memory._config_resolver.get_bank_config = AsyncMock(return_value={})
+        with pytest.raises(MCP_ARG_VALIDATION_ERRORS):
+            await mcp.call_tool("search_knowledge_bank", {"bank_id": "docs", "query": "q", "top_k": 0})
+        knowledge_service.search.assert_not_called()
+
+
+def _recall_with_documents() -> RecallResult:
+    from hindsight_api.engine.response_models import KnowledgeDocumentHit
+
+    return RecallResult(
+        results=[],
+        documents=[
+            KnowledgeDocumentHit(
+                bank_id="docs",
+                document_id="handbook",
+                passage_index=2,
+                media_type="text",
+                text="Rotate the keys every 90 days.",
+                score=0.8,
+                document_url="/v1/default/knowledge-banks/docs/documents/handbook/file",
+            )
+        ],
+    )
+
+
+@pytest.mark.asyncio
+class TestRecallKnowledgeDocuments:
+    @pytest.mark.parametrize("include_bank_id", [True, False])
+    async def test_recall_asks_for_documents_and_notes_their_authority(self, mock_memory, include_bank_id):
+        from hindsight_api.mcp_tools import DOCUMENTS_NOTE
+
+        mock_memory.recall_async = AsyncMock(return_value=_recall_with_documents())
+        mcp = _make_mcp_server(mock_memory, {"recall"}, include_bank_id=include_bank_id)
+        result = await _tools(mcp)["recall"].fn(query="key rotation")
+        payload = json.loads(result) if include_bank_id else result
+        assert mock_memory.recall_async.call_args.kwargs["include_documents"] is True
+        assert payload["documents"][0]["document_id"] == "handbook"
+        assert payload["documents_note"] == DOCUMENTS_NOTE
+
+    @pytest.mark.parametrize("include_bank_id", [True, False])
+    async def test_recall_without_documents_has_no_note(self, mock_memory, include_bank_id):
+        mock_memory.recall_async = AsyncMock(return_value=RecallResult(results=[]))
+        mcp = _make_mcp_server(mock_memory, {"recall"}, include_bank_id=include_bank_id)
+        result = await _tools(mcp)["recall"].fn(query="q")
+        payload = json.loads(result) if include_bank_id else result
+        assert "documents_note" not in payload

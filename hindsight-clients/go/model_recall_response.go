@@ -27,6 +27,7 @@ type RecallResponse struct {
 	Chunks map[string]ChunkData `json:"chunks,omitempty"`
 	SourceFacts map[string]RecallResult `json:"source_facts,omitempty"`
 	SourceFactsTruncated NullableBool `json:"source_facts_truncated,omitempty"`
+	Documents []KnowledgeDocumentHit `json:"documents,omitempty"`
 }
 
 type _RecallResponse RecallResponse
@@ -247,6 +248,39 @@ func (o *RecallResponse) UnsetSourceFactsTruncated() {
 	o.SourceFactsTruncated.Unset()
 }
 
+// GetDocuments returns the Documents field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RecallResponse) GetDocuments() []KnowledgeDocumentHit {
+	if o == nil {
+		var ret []KnowledgeDocumentHit
+		return ret
+	}
+	return o.Documents
+}
+
+// GetDocumentsOk returns a tuple with the Documents field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *RecallResponse) GetDocumentsOk() ([]KnowledgeDocumentHit, bool) {
+	if o == nil || IsNil(o.Documents) {
+		return nil, false
+	}
+	return o.Documents, true
+}
+
+// HasDocuments returns a boolean if a field has been set.
+func (o *RecallResponse) HasDocuments() bool {
+	if o != nil && !IsNil(o.Documents) {
+		return true
+	}
+
+	return false
+}
+
+// SetDocuments gets a reference to the given []KnowledgeDocumentHit and assigns it to the Documents field.
+func (o *RecallResponse) SetDocuments(v []KnowledgeDocumentHit) {
+	o.Documents = v
+}
+
 func (o RecallResponse) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -272,6 +306,9 @@ func (o RecallResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.SourceFactsTruncated.IsSet() {
 		toSerialize["source_facts_truncated"] = o.SourceFactsTruncated.Get()
+	}
+	if o.Documents != nil {
+		toSerialize["documents"] = o.Documents
 	}
 	return toSerialize, nil
 }

@@ -5243,6 +5243,10 @@ class MemoryEngine(MemoryEngineInterface):
                     await self._handle_vector_index_maintenance(task_dict)
                 elif task_type == "refresh_mental_model":
                     await self._handle_refresh_mental_model(task_dict)
+                elif task_type == "knowledge_ingest":
+                    from ..knowledge.service import run_ingest_task
+
+                    await run_ingest_task(self, task_dict)
                 elif task_type == "webhook_delivery":
                     await self._handle_webhook_delivery(task_dict)
                 else:
@@ -5311,9 +5315,12 @@ class MemoryEngine(MemoryEngineInterface):
 
                 error_traceback = traceback.format_exc()
 
-                if task_type == "file_convert_retain":
+                if task_type == "file_convert_retain" or (
+                    task_type == "knowledge_ingest" and isinstance(e, ValueError)
+                ):
                     # Non-retryable: mark as failed immediately.
-                    # Conversion failures won't improve on retry (missing OCR, corrupted file, etc.)
+                    # Conversion failures won't improve on retry (missing OCR, corrupted file, etc.),
+                    # and neither does a knowledge file that cannot be split (MediaError is a ValueError).
                     logger.error(f"Not retrying task {task_type} (non-retryable), marking as failed")
                     if operation_id:
                         await self._mark_operation_failed(operation_id, error_message, error_traceback)
@@ -9568,6 +9575,10 @@ class MemoryEngine(MemoryEngineInterface):
         # exact text: a stored document vector differs on asymmetric models.
         _query_embedding: list[float] | None = None,
         reranking: RecallReranking = "cross_encoder",
+        # Also search the knowledge banks this bank links (config `knowledge_banks`) and return
+        # their passages as `documents`. Off for internal callers: consolidation and mental models
+        # must never read documents (they would fold the docs into memories).
+        include_documents: bool = False,
     ) -> RecallResultModel:
         """
         Recall memories using N*4-way parallel retrieval (N fact types × 4 retrieval methods).
@@ -9970,6 +9981,11 @@ class MemoryEngine(MemoryEngineInterface):
 
                 if not get_memories().store_owned_for(bank_id):
                     await self._raise_if_bank_deleted(bank_id)
+
+            if include_documents and result is not None:
+                from ..knowledge.service import documents_for_memory_bank
+
+                result.documents = await documents_for_memory_bank(self, bank_id, query, request_context)
 
             # Call post-operation hook for success
             if self._operation_validator and result is not None:
@@ -15221,9 +15237,13 @@ class MemoryEngine(MemoryEngineInterface):
             else:
                 await assert_job_bank_alive_on_pool(backend, bank_id)
         if conn is not None:
-            exists = await bank_utils.bank_exists_on_conn(conn, bank_id)
+            kind = await bank_utils.bank_kind_on_conn(conn, bank_id)
         else:
-            exists = await bank_utils.bank_exists(backend, bank_id)
+            kind = await bank_utils.bank_kind(backend, bank_id)
+        if kind == "knowledge":
+            # Same id space, different API: a memory write must not land in a knowledge bank.
+            raise ValueError(f"'{bank_id}' is a knowledge bank; write to it through /v1/default/knowledge-banks")
+        exists = kind is not None
         if exists:
             # Storage is ensured even when the ROW already exists: `created` is false for a bank
             # that predates this call or whose storage was removed out of band, and those are

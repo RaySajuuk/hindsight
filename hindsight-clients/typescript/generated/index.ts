@@ -476,6 +476,7 @@ export type {
   ImportDocumentsResponse,
   ImportDocumentsResponses,
   IncludeOptions,
+  KnowledgeDocumentHit,
   KnowledgeNode,
   KnowledgePageBundleFile,
   KnowledgePageBundleResponse,

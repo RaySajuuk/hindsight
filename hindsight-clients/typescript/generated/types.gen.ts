@@ -721,6 +721,12 @@ export type BankTemplateConfig = {
    */
   mcp_enabled_tools?: Array<string> | null;
   /**
+   * Knowledge Banks
+   *
+   * Knowledge banks whose passages this bank's recall and reflect read
+   */
+  knowledge_banks?: Array<string> | null;
+  /**
    * Consolidation Llm Batch Size
    *
    * LLM batch size for observation consolidation
@@ -2958,6 +2964,12 @@ export type FeaturesInfo = {
    */
   document_import_api: boolean;
   /**
+   * Knowledge Banks
+   *
+   * Whether knowledge banks are enabled
+   */
+  knowledge_banks?: boolean;
+  /**
    * Audit Log
    *
    * Whether audit logging is enabled by default (overridable per bank)
@@ -3082,6 +3094,80 @@ export type IncludeOptions = {
    * Include source facts for observation-type results. Set to {} to enable, null to disable (default: disabled).
    */
   source_facts?: SourceFactsIncludeOptions | null;
+};
+
+/**
+ * KnowledgeDocumentHit
+ *
+ * A passage from a knowledge bank the memory bank links: an authoritative document.
+ *
+ * When it conflicts with a memory, the document wins.
+ */
+export type KnowledgeDocumentHit = {
+  /**
+   * Bank Id
+   *
+   * The knowledge bank the passage is from
+   */
+  bank_id: string;
+  /**
+   * Document Id
+   */
+  document_id: string;
+  /**
+   * Passage Index
+   */
+  passage_index: number;
+  /**
+   * Filename
+   */
+  filename?: string | null;
+  /**
+   * Media Type
+   *
+   * document (PDF, Office), image, audio, video or text
+   */
+  media_type: string;
+  /**
+   * Text
+   *
+   * Text of the passage (a PDF page's text layer, or a text passage)
+   */
+  text?: string | null;
+  /**
+   * Page
+   */
+  page?: number | null;
+  /**
+   * Start Ms
+   */
+  start_ms?: number | null;
+  /**
+   * End Ms
+   */
+  end_ms?: number | null;
+  /**
+   * Score
+   *
+   * Cosine similarity between the query and the passage
+   */
+  score: number;
+  /**
+   * Passage Url
+   *
+   * Streams this passage's page image or clip
+   */
+  passage_url?: string | null;
+  /**
+   * Document Url
+   *
+   * Streams the original file
+   */
+  document_url: string;
+  /**
+   * Tags
+   */
+  tags?: Array<string>;
 };
 
 /**
@@ -5886,6 +5972,12 @@ export type RecallResponse = {
    * Whether the source_facts map was cut short by the token budget. When true, some IDs in results[].source_fact_ids have no entry in source_facts — the budget ran out, the references are not dangling. Only set when source facts were requested.
    */
   source_facts_truncated?: boolean | null;
+  /**
+   * Documents
+   *
+   * Passages from the knowledge banks this bank links (bank config `knowledge_banks`). They are authoritative product documentation: when a document and a memory disagree, the document wins.
+   */
+  documents?: Array<KnowledgeDocumentHit> | null;
 };
 
 /**

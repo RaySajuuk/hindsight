@@ -283,6 +283,11 @@ function getMcpToolGroups(t: (key: string) => string): McpToolGroup[] {
         "delete_knowledge_node",
       ],
     },
+    {
+      key: "knowledgeBanks",
+      label: t("mcpGroupKnowledgeBanks"),
+      tools: ["list_knowledge_banks", "search_knowledge_bank"],
+    },
   ];
 }
 
@@ -326,6 +331,8 @@ const MCP_ALL_TOOLS: string[] = [
   "create_knowledge_page",
   "update_knowledge_node",
   "delete_knowledge_node",
+  "list_knowledge_banks",
+  "search_knowledge_bank",
 ];
 const ALL_TOOLS: string[] = MCP_ALL_TOOLS;
 
@@ -1842,7 +1849,11 @@ function ToolSelector({
   onChange: (tools: string[]) => void;
 }) {
   const t = useTranslations("bankConfig");
-  const mcpToolGroups = getMcpToolGroups(t);
+  const { features } = useFeatures();
+  // Knowledge bank tools exist only on a server with knowledge banks on.
+  const mcpToolGroups = getMcpToolGroups(t).filter(
+    (group) => group.key !== "knowledgeBanks" || features?.knowledge_banks
+  );
   const selectedSet = new Set(selected);
 
   const toggleTool = (tool: string) => {
@@ -1928,7 +1939,7 @@ function ToolSelector({
 
 // ─── ConfigSection ────────────────────────────────────────────────────────────
 
-function ConfigSection({
+export function ConfigSection({
   title,
   description,
   children,
@@ -2177,7 +2188,7 @@ function BankAliasRows({ bankId }: { bankId: string | null }) {
 
 // ─── FieldRow (2-column layout for number / select / boolean) ─────────────────
 
-function FieldRow({
+export function FieldRow({
   label,
   description,
   children,

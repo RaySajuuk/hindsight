@@ -6665,6 +6665,11 @@ components:
             type: string
           nullable: true
           type: array
+        knowledge_banks:
+          items:
+            type: string
+          nullable: true
+          type: array
         consolidation_llm_batch_size:
           nullable: true
           type: integer
@@ -9011,6 +9016,11 @@ components:
           description: Whether the document import endpoint is enabled
           title: Document Import Api
           type: boolean
+        knowledge_banks:
+          default: false
+          description: Whether knowledge banks are enabled
+          title: Knowledge Banks
+          type: boolean
         audit_log:
           description: Whether audit logging is enabled by default (overridable per
             bank)
@@ -9177,6 +9187,64 @@ components:
         source_facts:
           $ref: '#/components/schemas/SourceFactsIncludeOptions'
       title: IncludeOptions
+    KnowledgeDocumentHit:
+      description: |-
+        A passage from a knowledge bank the memory bank links: an authoritative document.
+
+        When it conflicts with a memory, the document wins.
+      properties:
+        bank_id:
+          description: The knowledge bank the passage is from
+          title: Bank Id
+          type: string
+        document_id:
+          title: Document Id
+          type: string
+        passage_index:
+          title: Passage Index
+          type: integer
+        filename:
+          nullable: true
+          type: string
+        media_type:
+          description: "document (PDF, Office), image, audio, video or text"
+          title: Media Type
+          type: string
+        text:
+          nullable: true
+          type: string
+        page:
+          nullable: true
+          type: integer
+        start_ms:
+          nullable: true
+          type: integer
+        end_ms:
+          nullable: true
+          type: integer
+        score:
+          description: Cosine similarity between the query and the passage
+          title: Score
+          type: number
+        passage_url:
+          nullable: true
+          type: string
+        document_url:
+          description: Streams the original file
+          title: Document Url
+          type: string
+        tags:
+          items:
+            type: string
+          type: array
+      required:
+      - bank_id
+      - document_id
+      - document_url
+      - media_type
+      - passage_index
+      - score
+      title: KnowledgeDocumentHit
     KnowledgeNode:
       description: |-
         A node in the knowledge-base tree — a folder or a page.
@@ -12388,6 +12456,11 @@ components:
         source_facts_truncated:
           nullable: true
           type: boolean
+        documents:
+          items:
+            $ref: '#/components/schemas/KnowledgeDocumentHit'
+          nullable: true
+          type: array
       required:
       - results
       title: RecallResponse
@@ -13758,6 +13831,7 @@ components:
           document_export_api: true
           document_import_api: true
           file_upload_api: true
+          knowledge_banks: false
           llm_trace: false
           mcp: true
           observations: false
